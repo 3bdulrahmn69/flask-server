@@ -160,4 +160,4 @@ if __name__ == '__main__':
     # Initialize the database
     init_db()
     # Run the Flask server
-    app.run(host='0.0.0.0', port=5000)
+    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 3000)))
