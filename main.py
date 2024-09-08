@@ -1,3 +1,4 @@
+import os
 from flask import Flask, request, jsonify
 import sqlite3
 from datetime import datetime
@@ -11,6 +12,12 @@ app = Flask(__name__)
 
 # Set up logging
 logging.basicConfig(filename='server.log', level=logging.INFO)
+
+# Get the secret key from environment variables
+SECRET_KEY = os.getenv('SECRET_KEY')
+
+def check_password(password):
+    return password == SECRET_KEY
 
 # Function to initialize the SQLite database
 def init_db():
@@ -129,9 +136,14 @@ def add_license():
     data = request.get_json()
     name = data.get('name')
     exp_date = data.get('exp_date')
+    password = data.get('password')
 
     if not name or not exp_date:
         return jsonify({'message': 'Name or expiration date not provided'}), 400
+
+    # Check password
+    if not check_password(password):
+        return jsonify({'message': 'Invalid password'}), 403
 
     # Add the license key
     license_key = add_license_key(name, exp_date)
@@ -146,9 +158,14 @@ def add_license():
 def delete_license():
     data = request.get_json()
     license_key = data.get('key')
+    password = data.get('password')
 
     if not license_key:
         return jsonify({'message': 'No key provided'}), 400
+
+    # Check password
+    if not check_password(password):
+        return jsonify({'message': 'Invalid password'}), 403
 
     # Delete the license key
     if delete_license_key(license_key):
