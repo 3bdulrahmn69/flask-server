@@ -124,7 +124,7 @@ def check_license():
     result = check_license_key(license_key)
 
     if result is None:
-        return jsonify({'message': 'Key Not Found'}), 404
+        return jsonify({'isKeyWork': False,'message': 'Key Not Found'}), 404
     elif result['status']:
         return jsonify({'isKeyWork': True, 'message': result['message']}), 200
     else:
@@ -172,6 +172,30 @@ def delete_license():
         return jsonify({'message': 'License key deleted successfully'}), 200
     else:
         return jsonify({'message': 'Key Not Found'}), 404
+
+# Endpoint to retrieve all license keys
+@app.route('/get-all-licenses', methods=['POST'])
+def get_all_licenses():
+    data = request.get_json()
+    password = data.get('password')
+
+    if not check_password(password):
+        return jsonify({'message': 'Invalid password'}), 403
+
+    try:
+        conn = sqlite3.connect('licenses.db')
+        cursor = conn.cursor()
+        cursor.execute('SELECT key, name, exp_date FROM licenses')
+        licenses = cursor.fetchall()
+        conn.close()
+
+        # Format the response
+        licenses_list = [{'key': row[0], 'name': row[1], 'exp_date': row[2]} for row in licenses]
+
+        return jsonify({'licenses': licenses_list}), 200
+    except sqlite3.DatabaseError as e:
+        logging.error(f"Database error occurred while retrieving licenses: {e}")
+        return jsonify({'message': 'Failed to retrieve licenses'}), 500
 
 if __name__ == '__main__':
     # Initialize the database
