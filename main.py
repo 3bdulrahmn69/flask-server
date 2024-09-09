@@ -29,7 +29,8 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         key TEXT UNIQUE NOT NULL,
         name TEXT NOT NULL,
-        exp_date TEXT NOT NULL
+        exp_date TEXT NOT NULL,
+        isBlocked BOOLEAN NOT NULL DEFAULT 0
     )
     ''')
     conn.commit()
@@ -52,7 +53,7 @@ def license_key_exists(license_key):
     return exists
 
 # Function to add a new license key to the database
-def add_license_key(name, exp_date):
+def add_license_key(name, exp_date, is_blocked=False):
     try:
         exp_date_db_format = datetime.strptime(exp_date, '%d/%m/%Y').strftime('%Y-%m-%d')
         license_key = generate_license_key()
@@ -61,10 +62,15 @@ def add_license_key(name, exp_date):
 
         conn = sqlite3.connect('licenses.db')
         cursor = conn.cursor()
-        cursor.execute('INSERT INTO licenses (key, name, exp_date) VALUES (?, ?, ?)', 
-                        (license_key, name, exp_date_db_format))
+        cursor.execute('INSERT INTO licenses (key, name, exp_date, isBlocked) VALUES (?, ?, ?, ?)', 
+                        (license_key, name, exp_date_db_format, int(is_blocked)))
         conn.commit()
+        if cursor.rowcount == 0:
+            raise Exception("No rows inserted")
         return license_key
+    except sqlite3.IntegrityError:
+        logging.error("IntegrityError: Likely due to duplicate key")
+        return None
     except sqlite3.DatabaseError as e:
         logging.error(f"Database error occurred while adding license key: {e}")
         return None
@@ -76,14 +82,17 @@ def check_license_key(license_key):
     try:
         conn = sqlite3.connect('licenses.db')
         cursor = conn.cursor()
-        cursor.execute('SELECT exp_date FROM licenses WHERE key = ?', (license_key,))
+        cursor.execute('SELECT exp_date, isBlocked FROM licenses WHERE key = ?', (license_key,))
         result = cursor.fetchone()
         if result:
             exp_date = datetime.strptime(result[0], '%Y-%m-%d')
+            is_blocked = bool(result[1])
+            if is_blocked:
+                return {'status': False, 'message': 'Key is blocked', 'isBlocked': True}
             if exp_date >= datetime.now():
-                return {'status': True, 'message': 'valid key'}
+                return {'status': True, 'message': 'Valid key', 'isBlocked': False}
             else:
-                return {'status': False, 'message': 'expired key'}
+                return {'status': False, 'message': 'Expired key', 'isBlocked': False}
         else:
             return None
     except sqlite3.DatabaseError as e:
@@ -124,11 +133,11 @@ def check_license():
     result = check_license_key(license_key)
 
     if result is None:
-        return jsonify({'isKeyWork': False,'message': 'Key Not Found'}), 404
+        return jsonify({'isKeyWork': False, 'message': 'Key Not Found', 'isBlocked': False}), 404
     elif result['status']:
-        return jsonify({'isKeyWork': True, 'message': result['message']}), 200
+        return jsonify({'isKeyWork': True, 'message': result['message'], 'isBlocked': result['isBlocked']}), 200
     else:
-        return jsonify({'isKeyWork': False, 'message': result['message']}), 200
+        return jsonify({'isKeyWork': False, 'message': result['message'], 'isBlocked': result['isBlocked']}), 200
 
 # API endpoint to add a new license key
 @app.route('/add-license', methods=['POST'])
@@ -137,6 +146,7 @@ def add_license():
     name = data.get('name')
     exp_date = data.get('exp_date')
     password = data.get('password')
+    is_blocked = data.get('isBlocked', False)  # Default to False if not provided
 
     if not name or not exp_date:
         return jsonify({'message': 'Name or expiration date not provided'}), 400
@@ -146,7 +156,7 @@ def add_license():
         return jsonify({'message': 'Invalid password'}), 403
 
     # Add the license key
-    license_key = add_license_key(name, exp_date)
+    license_key = add_license_key(name, exp_date, is_blocked)
 
     if license_key is None:
         return jsonify({'message': 'Failed to add license key, key might already exist'}), 500
@@ -185,20 +195,50 @@ def get_all_licenses():
     try:
         conn = sqlite3.connect('licenses.db')
         cursor = conn.cursor()
-        cursor.execute('SELECT key, name, exp_date FROM licenses')
+        cursor.execute('SELECT key, name, exp_date, isBlocked FROM licenses')
         licenses = cursor.fetchall()
         conn.close()
 
         # Format the response
-        licenses_list = [{'key': row[0], 'name': row[1], 'exp_date': row[2]} for row in licenses]
+        licenses_list = [{'key': row[0], 'name': row[1], 'exp_date': row[2], 'isBlocked': bool(row[3])} for row in licenses]
 
         return jsonify({'licenses': licenses_list}), 200
     except sqlite3.DatabaseError as e:
         logging.error(f"Database error occurred while retrieving licenses: {e}")
         return jsonify({'message': 'Failed to retrieve licenses'}), 500
 
+@app.route('/update-license-blocked', methods=['POST'])
+def update_license_blocked():
+    data = request.get_json()
+    license_key = data.get('key')
+    is_blocked = data.get('isBlocked', False)  # Default to False if not provided
+    password = data.get('password')
+
+    if not license_key:
+        return jsonify({'message': 'Key not provided'}), 400
+
+    # Check password
+    if not check_password(password):
+        return jsonify({'message': 'Invalid password'}), 403
+
+    try:
+        conn = sqlite3.connect('licenses.db')
+        cursor = conn.cursor()
+        cursor.execute('UPDATE licenses SET isBlocked = ? WHERE key = ?', (int(is_blocked), license_key))
+        conn.commit()
+        rows_updated = cursor.rowcount
+        conn.close()
+
+        if rows_updated > 0:
+            return jsonify({'message': 'License key blocked status updated successfully'}), 200
+        else:
+            return jsonify({'message': 'Key Not Found'}), 404
+    except sqlite3.DatabaseError as e:
+        logging.error(f"Database error occurred while updating blocked status: {e}")
+        return jsonify({'message': 'Failed to update blocked status'}), 500
+
 if __name__ == '__main__':
     # Initialize the database
     init_db()
     # Run the Flask server
-    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 3000)))
+    app.run(host='0.0.0.0', port=3000)
